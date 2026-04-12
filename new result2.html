@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Secure Allied School - Permanent Result Management System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import {
+            getAuth, signInAnonymously, signInWithCustomToken,
+            onAuthStateChanged, signInWithEmailAndPassword,
+            signOut, createUserWithEmailAndPassword
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        window.firebase = {
+            initializeApp, getAuth, signInAnonymously, signInWithCustomToken,
+            onAuthStateChanged, getFirestore, doc, setDoc, getDoc,
+            serverTimestamp, setLogLevel,
+            signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword
+        };
+    </script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'allied-blue': '#1e40af',
+                        'allied-gold': '#f59e0b',
+                        'allied-light': '#eff6ff',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'Times New Roman', 'serif'],
+                    },
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .calibri-style { font-family: ui-sans-serif, system-ui, sans-serif !important; }
+        .subject-input { width: 100%; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; background:white; }
+        .subject-input:focus { border-color:#1e40af; outline:none; box-shadow: 0 0 0 2px rgba(30,64,175,0.12); }
+
+        @media print {
+            @page { size: Letter; margin: 0.5in 0.75in; }
+            body { background: white !important; margin:0; padding:0; }
+            .no-print { display:none !important; }
+            .print-area { width:100%!important; height:100%!important; margin:0!important; box-shadow:none!important; padding:0!important; font-size:11pt; border: 3px solid #1e40af; outline:2px solid #f59e0b; outline-offset:-5px; }
+            #marksChartContainer { height:200px!important; width:200px!important; }
+            #qrcode img { display: inline-block !important; margin: 0 auto; }
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 flex justify-center">
+
+<div id="app-container" class="w-full max-w-6xl">
+    <header class="text-center mb-6 p-6 bg-white shadow-xl rounded-xl no-print">
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-allied-blue tracking-tight">SECURE ONLINE RESULT MANAGEMENT SYSTEM</h1>
+        <p class="text-lg text-gray-600 font-semibold mt-1">Admin Login Required to Save Data</p>
+        <div class="mt-4 flex flex-wrap justify-center gap-3">
+            <button onclick="showSection('viewer')" id="btn-viewer" class="px-4 py-2 bg-allied-gold text-white font-semibold rounded-lg text-sm">View Results (Public)</button>
+            <button onclick="showSection('generator')" id="btn-generator" class="px-4 py-2 bg-allied-blue text-white font-semibold rounded-lg text-sm">Generate & Save Result (Admin Login)</button>
+        </div>
+        <p id="user-info" class="text-xs mt-3 text-gray-500"></p>
+    </header>
+
+    <div id="viewer-section" class="bg-white p-6 sm:p-8 rounded-xl shadow-xl space-y-8">
+        <h2 class="text-2xl font-bold text-allied-gold mb-4">Search & View Result (No Login Required)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div>
+                <label for="viewRollNo" class="block text-sm font-medium text-gray-700 mb-1">Enter Roll Number</label>
+                <input type="text" id="viewRollNo" class="subject-input font-bold uppercase" placeholder="e.g., 101-A-2024">
+            </div>
+            <div>
+                <label for="captcha-input" class="block text-sm font-medium text-gray-700 mb-1">Security Check: <span id="captcha-question" class="font-bold text-allied-blue"></span></label>
+                <input type="number" id="captcha-input" class="subject-input" placeholder="Your Answer">
+            </div>
+            <div class="flex items-end">
+                <button id="load-button" onclick="loadResult()" class="w-full px-6 py-3 bg-green-600 text-white font-bold text-lg rounded-xl">View Result</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="generator-section" class="bg-white p-6 sm:p-8 rounded-xl shadow-xl space-y-8 hidden">
+        <h2 class="text-2xl font-bold text-allied-blue mb-4">Generate & Save Result (Admin)</h2>
+
+        <section id="admin-login-area" class="border p-6 rounded-lg bg-gray-50">
+            <div id="login-form-content">
+                <h3 class="text-xl font-semibold text-allied-blue mb-4">Admin Login</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div>
+                        <label for="adminEmail" class="block text-sm font-medium text-gray-700 mb-1">Login ID (Email)</label>
+                        <input type="email" id="adminEmail" class="subject-input" placeholder="admin@school.edu" value="hr865095@gmail.com">
+                    </div>
+                    <div>
+                        <label for="adminPassword" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                        <input type="password" id="adminPassword" class="subject-input" placeholder="Password" value="Allied School Sahowala">
+                    </div>
+                    <div class="flex items-end">
+                        <button id="login-button" onclick="handleAdminLogin()" class="w-full px-4 py-2 bg-allied-gold text-white font-semibold rounded-lg">Sign In</button>
+                    </div>
+                </div>
+            </div>
+            <div id="admin-info-signed-in" class="hidden">
+                <p class="text-lg font-bold text-green-700 mb-4">Signed in successfully!</p>
+                <button onclick="handleAdminSignOut()" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg">Sign Out</button>
+            </div>
+        </section>
+
+        <div id="generator-form-area" class="hidden space-y-8">
+            <section class="border-b pb-6">
+                <h3 class="text-xl font-semibold text-gray-700 mb-4">Student Details & Examination</h3>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div><label class="block text-sm">Student Name</label><input id="studentName" class="subject-input" value="Muhammad Ali"></div>
+                    <div><label class="block text-sm">Father Name</label><input id="fatherName" class="subject-input" value="Ahmed Khan"></div>
+                    <div><label class="block text-sm">Class</label><input id="class" class="subject-input" value="9th Grade"></div>
+                    <div><label class="block text-sm">Roll No.</label><input id="rollNo" class="subject-input uppercase font-bold" value="101-A-2024"></div>
+                    <div><label class="block text-sm">Examination Title</label><input id="examination" class="subject-input" value="Annual Examination 2024"></div>
+                    <div><label class="block text-sm">Position</label><input id="position" class="subject-input" value="1st"></div>
+                </div>
+            </section>
+
+            <section class="border-b pb-6">
+                <h3 class="text-xl font-semibold text-gray-700 mb-4">Attendance Record</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div><label>Total Working Days</label><input id="workingDays" type="number" class="subject-input" value="180"></div>
+                    <div><label>Days Present</label><input id="daysPresent" type="number" class="subject-input" value="165"></div>
+                </div>
+            </section>
+
+            <section class="border-b pb-6">
+                <h3 class="text-xl font-semibold text-gray-700 mb-4">Subject Marks Entry</h3>
+                <div class="overflow-x-auto rounded-lg border border-gray-200">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-allied-blue text-white">
+                            <tr>
+                                <th class="px-3 py-3 text-left text-xs font-semibold">Subject</th>
+                                <th class="px-3 py-3 text-center text-xs font-semibold">Total Marks</th>
+                                <th class="px-3 py-3 text-center text-xs font-semibold">Marks Obtained</th>
+                                <th class="px-3 py-3 text-center text-xs font-semibold">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="subject-rows" class="bg-white divide-y divide-gray-200"></tbody>
+                    </table>
+                </div>
+                <div class="flex justify-between mt-4">
+                    <button onclick="addSubjectRow()" class="px-4 py-2 bg-allied-gold text-white rounded-lg">Add Subject</button>
+                    <p class="text-sm text-gray-500"><span id="subject-count">0</span> subjects</p>
+                </div>
+            </section>
+
+            <div class="flex justify-end pt-4">
+                <button onclick="handleResultGenerationAndSave()" id="save-result-btn" class="px-6 py-3 bg-allied-blue text-white rounded-xl">Save Result & Preview</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="result-card-container" class="mt-10 hidden print-area bg-white p-6 sm:p-10 rounded-xl shadow-2xl"></div>
+</div>
+
+<script>
+    const firebaseConfig = {}; 
+    const appId = 'allied-school-sahowala-app';
+    const FALLBACK_ADMIN_EMAIL = 'hr865095@gmail.com';
+    const FALLBACK_ADMIN_PASSWORD = 'Allied School Sahowala';
+
+    let app, db, auth;
+    let isAdminLoggedIn = false;
+    let subjects = [];
+    let nextId = 1;
+    let currentCaptchaAnswer = 0;
+    let marksChartInstance = null;
+    let usingFirebase = false;
+
+    function showMessageBox(title, message) {
+        const modalId = 'custom-modal';
+        let modal = document.getElementById(modalId);
+        if (!modal) { alert(title + '\n\n' + message); return; }
+        document.getElementById('modal-title').textContent = title;
+        document.getElementById('modal-message').textContent = message;
+        modal.classList.remove('hidden');
+        setTimeout(() => modal.querySelector('div').classList.remove('scale-95', 'opacity-0'), 10);
+    }
+
+    function cleanNumberInput(value) {
+        const n = parseInt(value, 10);
+        return isNaN(n) || n < 0 ? 0 : n;
+    }
+
+    function generateCaptcha() {
+        const a = Math.floor(Math.random()*10)+1;
+        const b = Math.floor(Math.random()*10)+1;
+        currentCaptchaAnswer = a + b;
+        const el = document.getElementById('captcha-question');
+        if (el) el.textContent = `${a} + ${b} = ?`;
+        const input = document.getElementById('captcha-input');
+        if (input) input.value = '';
+    }
+
+    function showSection(sectionId) {
+        document.getElementById('viewer-section').classList.add('hidden');
+        document.getElementById('generator-section').classList.add('hidden');
+        document.getElementById('result-card-container').classList.add('hidden');
+        if (sectionId === 'viewer') {
+            document.getElementById('viewer-section').classList.remove('hidden');
+        } else {
+            document.getElementById('generator-section').classList.remove('hidden');
+            updateGeneratorVisibility();
+        }
+    }
+
+    function updateGeneratorVisibility() {
+        const loginArea = document.getElementById('admin-login-area');
+        const loginForm = document.getElementById('login-form-content');
+        const signedInInfo = document.getElementById('admin-info-signed-in');
+        const generatorForm = document.getElementById('generator-form-area');
+        if (isAdminLoggedIn) {
+            loginForm.classList.add('hidden');
+            signedInInfo.classList.remove('hidden');
+            generatorForm.classList.remove('hidden');
+            loginArea.classList.remove('bg-gray-50');
+            loginArea.classList.add('bg-green-50');
+        } else {
+            loginForm.classList.remove('hidden');
+            signedInInfo.classList.add('hidden');
+            generatorForm.classList.add('hidden');
+            loginArea.classList.add('bg-gray-50');
+            loginArea.classList.remove('bg-green-50');
+        }
+    }
+
+    function renderSubjectRows() {
+        const container = document.getElementById('subject-rows');
+        container.innerHTML = '';
+        document.getElementById('subject-count').textContent = subjects.length;
+        subjects.forEach(s => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="px-3 py-2"><input data-id="${s.id}" data-field="name" onchange="updateSubjectData(this)" class="subject-input" value="${s.name}"></td>
+                <td class="px-3 py-2 text-center"><input type="number" data-id="${s.id}" data-field="total" onchange="updateSubjectData(this)" class="subject-input" value="${s.total}"></td>
+                <td class="px-3 py-2 text-center"><input type="number" data-id="${s.id}" data-field="marksObtained" onchange="updateSubjectData(this)" class="subject-input" value="${s.marksObtained}"></td>
+                <td class="px-3 py-2 text-center"><button onclick="removeSubjectRow(${s.id})" class="text-red-600">Remove</button></td>
+            `;
+            container.appendChild(tr);
+        });
+    }
+
+    function updateSubjectData(el) {
+        const id = parseInt(el.dataset.id,10);
+        const field = el.dataset.field;
+        const idx = subjects.findIndex(x => x.id === id);
+        if (idx === -1) return;
+        subjects[idx][field] = field === 'name' ? el.value : cleanNumberInput(el.value);
+        renderSubjectRows();
+    }
+
+    function addSubjectRow() {
+        subjects.push({ id: nextId++, name: `Subject ${nextId}`, total: 100, marksObtained: 0 });
+        renderSubjectRows();
+    }
+
+    function removeSubjectRow(id) {
+        if (subjects.length <= 1) { showMessageBox('Cannot remove', 'At least one subject required'); return; }
+        subjects = subjects.filter(s => s.id !== id);
+        renderSubjectRows();
+    }
+
+    function drawDoughnutChart(canvasId, marksObtained, totalMarks) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (marksChartInstance) marksChartInstance.destroy();
+        const remaining = Math.max(0, totalMarks - marksObtained);
+        const percentage = totalMarks > 0 ? ((marksObtained/totalMarks)*100).toFixed(1) : '0.0';
+        marksChartInstance = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Marks Obtained','Remaining'],
+                datasets: [{ data: [marksObtained, remaining], backgroundColor:['#1e40af','#f59e0b'] }]
+            },
+            options: { responsive:true, maintainAspectRatio:false, cutout:'70%', plugins:{ legend:{position:'bottom'} } },
+            plugins: [{
+                id: 'centerText',
+                beforeDraw(chart) {
+                    const {ctx, chartArea:{left, top, width, height}} = chart;
+                    ctx.save();
+                    const text = `${percentage}%`;
+                    ctx.textAlign='center'; ctx.textBaseline='middle';
+                    ctx.font = "bold 24px Times New Roman";
+                    ctx.fillStyle = '#1e40af';
+                    ctx.fillText(text, left + width/2, top + height/2 - 8);
+                    ctx.font = "12px Times New Roman";
+                    ctx.fillStyle = '#4b5563';
+                    ctx.fillText('Overall', left + width/2, top + height/2 + 16);
+                    ctx.restore();
+                }
+            }]
+        });
+    }
+
+    function calculateGrade(percentage) {
+        if (percentage >= 90) return 'A+';
+        if (percentage >= 80) return 'A';
+        if (percentage >= 70) return 'B';
+        if (percentage >= 60) return 'C';
+        if (percentage >= 50) return 'D';
+        if (percentage >= 40) return 'E';
+        return 'F';
+    }
+
+    function collectFormData() {
+        const data = {
+            studentName: document.getElementById('studentName').value.trim(),
+            fatherName: document.getElementById('fatherName').value.trim(),
+            studentClass: document.getElementById('class').value.trim(),
+            rollNo: document.getElementById('rollNo').value.trim(),
+            examination: document.getElementById('examination').value.trim(),
+            position: document.getElementById('position').value.trim(),
+            workingDays: cleanNumberInput(document.getElementById('workingDays').value),
+            daysPresent: cleanNumberInput(document.getElementById('daysPresent').value),
+            subjects: subjects.map(s => ({...s}))
+        };
+        if (!data.studentName || !data.rollNo || data.subjects.length === 0) {
+            showMessageBox('Missing', 'Student Name, Roll No and at least 1 subject required.');
+            return null;
+        }
+        return data;
+    }
+
+    function calculateResultSummary(data) {
+        let total = 0, obtained = 0, fails = 0;
+        const subjectsWithStats = data.subjects.map(s => {
+            const t = cleanNumberInput(s.total), o = cleanNumberInput(s.marksObtained);
+            total += t; obtained += o;
+            const min = Math.ceil(t*0.33);
+            const pass = o >= min;
+            if (!pass) fails++;
+            const perc = t > 0 ? (o / t) * 100 : 0;
+            return {...s, total: t, marksObtained: o, minMarks:min, grade: calculateGrade(perc), statusText: pass ? 'Pass' : 'Fail'};
+        });
+        const percentage = total > 0 ? ((obtained/total)*100).toFixed(2) : '0.00';
+        const finalGrade = calculateGrade(parseFloat(percentage));
+        const resultStatus = fails === 0 ? 'PASS' : `FAIL (${fails})`;
+        const attendancePercentage = data.workingDays > 0 ? ((data.daysPresent / data.workingDays)*100).toFixed(1) : '0.0';
+        const remarks = fails > 0 ? `Needs improvement. Failures: ${fails}` : (parseFloat(percentage) >= 80 ? 'Excellent performance.' : (parseFloat(percentage) >= 60 ? 'Very good.' : 'Work harder.'));
+        return { totalMarks: total, totalMarksObtained: obtained, percentage, finalGrade, resultStatus, attendancePercentage, remarks, subjectsWithStats };
+    }
+
+    // --- Added: QR Verification URL Logic ---
+    function generateVerificationURL(rollNo) {
+        const baseUrl = window.location.href.split('?')[0];
+        return `${baseUrl}?rollNo=${encodeURIComponent(rollNo)}`;
+    }
+
+    function generateResultCardHTML(data, stats) {
+        const subjectRows = stats.subjectsWithStats.map(s => `
+            <tr class="border-t"><td class="px-4 py-2">${s.name}</td><td class="px-4 py-2 text-center">${s.total}</td><td class="px-4 py-2 text-center font-semibold">${s.marksObtained}</td><td class="px-4 py-2 text-center">${s.minMarks}</td><td class="px-4 py-2 text-center font-bold">${s.grade}</td><td class="px-4 py-2 text-center">${s.statusText}</td></tr>
+        `).join('');
+        
+        return `
+            <div class="flex flex-col md:flex-row justify-between items-start mb-4">
+                <div class="flex-1">
+                    <p class="calibri-style font-bold text-base mb-2">Affiliated With Board of Intermediate & secondary Education, Gujranwala</p>
+                    <div class="text-5xl font-black text-allied-blue tracking-widest leading-none">ALLIED SCHOOL</div>
+                    <div class="text-xl text-allied-gold font-bold">EXCELLENCE IN EDUCATION</div>
+                </div>
+                <div class="mt-4 md:mt-0 text-center">
+                    <div id="qrcode" class="bg-white p-2 border-2 border-allied-blue inline-block"></div>
+                    <p class="text-[10px] font-bold text-allied-blue mt-1 uppercase">Scan to Verify Result</p>
+                </div>
+            </div>
+
+            <p class="text-xl text-center text-allied-blue font-bold border-y-2 border-allied-gold py-1 mb-6 uppercase">${data.examination}</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-x-8 gap-y-3 mb-8 text-lg">
+                <div class="flex justify-between border-b border-gray-300"><span class="font-medium text-gray-600">Student Name:</span> <span class="font-bold">${data.studentName}</span></div>
+                <div class="flex justify-between border-b border-gray-300"><span class="font-medium text-gray-600">Father Name:</span> <span class="font-bold">${data.fatherName}</span></div>
+                <div class="flex justify-between border-b border-gray-300"><span class="font-medium text-gray-600">Roll No:</span> <span class="font-bold">${data.rollNo}</span></div>
+                <div class="flex justify-between border-b border-gray-300"><span class="font-medium text-gray-600">Class:</span> <span class="font-bold">${data.studentClass}</span></div>
+                <div class="flex justify-between border-b border-gray-300"><span class="font-medium text-gray-600">Position:</span> <span class="font-bold text-allied-gold">${data.position}</span></div>
+                <div class="flex justify-between border-b border-gray-300"><span class="font-medium text-gray-600">Date Issued:</span> <span class="font-bold">${new Date().toLocaleDateString()}</span></div>
+            </div>
+
+            <h2 class="text-xl font-bold text-allied-blue mb-4">Subject Wise Breakdown</h2>
+            <div class="overflow-x-auto border rounded-lg">
+                <table class="min-w-full">
+                    <thead class="bg-allied-blue text-white"><tr><th class="px-4 py-2">Subject</th><th class="px-4 py-2">Total Marks</th><th class="px-4 py-2">Marks Obtained</th><th class="px-4 py-2">Min. Marks</th><th class="px-4 py-2">Grade</th><th class="px-4 py-2">Status</th></tr></thead>
+                    <tbody>${subjectRows}</tbody>
+                    <tfoot class="bg-allied-light font-extrabold"><tr><td class="px-4 py-3">GRAND TOTAL:</td><td class="px-4 py-3 text-center">${stats.totalMarks}</td><td class="px-4 py-3 text-center">${stats.totalMarksObtained}</td><td colspan="3"></td></tr></tfoot>
+                </table>
+            </div>
+
+            <div class="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="space-y-4">
+                    <div class="p-4 rounded-lg bg-allied-light border-2 border-allied-gold text-center">
+                        <p class="text-sm">PERCENTAGE / FINAL GRADE</p>
+                        <p class="text-3xl font-black text-allied-blue mt-1">${stats.percentage}% / ${stats.finalGrade}</p>
+                    </div>
+                    <div class="p-4 rounded-lg ${stats.resultStatus === 'PASS' ? 'bg-green-100' : 'bg-red-100'} border-2 text-center">
+                        <p class="text-sm">RESULT STATUS</p>
+                        <p class="text-3xl font-black mt-1">${stats.resultStatus}</p>
+                    </div>
+                </div>
+                <div class="lg:col-span-2 p-4 bg-white rounded-lg border-2 border-gray-200 shadow-md flex flex-col items-center">
+                    <h3 class="text-lg font-bold text-allied-blue mb-2">Performance Graph</h3>
+                    <div id="marksChartContainer" style="height:200px;width:200px;">
+                        <canvas id="marksChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-8 p-4 bg-gray-50 rounded-lg border"> <p class="text-sm font-semibold text-allied-blue mb-1">Remarks:</p><p class="text-gray-700 italic">"${stats.remarks}"</p></div>
+
+            <div class="mt-10 flex justify-between items-end pt-4 border-t-2">
+                <div class="text-center"><p class="text-sm text-gray-500">_________________________</p><p class="font-medium text-allied-blue">Class Teacher</p></div>
+                <div class="text-center"><p class="text-sm text-gray-500">_________________________</p><p class="font-medium text-allied-blue">Principal (Seal)</p></div>
+            </div>
+
+            <div class="mt-10 text-center no-print">
+                <button onclick="window.print()" class="px-6 py-3 bg-green-600 text-white rounded-xl">Print / Generate PDF</button>
+                <button onclick="hideResultCard()" class="ml-4 px-6 py-3 bg-gray-500 text-white rounded-xl">Close</button>
+            </div>
+        `;
+    }
+
+    function showResultCard(data, stats) {
+        const container = document.getElementById('result-card-container');
+        container.innerHTML = generateResultCardHTML(data, stats);
+        container.classList.remove('hidden');
+        document.getElementById('viewer-section').classList.add('hidden');
+        document.getElementById('generator-section').classList.add('hidden');
+        
+        // DRAW CHART
+        drawDoughnutChart('marksChart', stats.totalMarksObtained, stats.totalMarks);
+        
+        // DRAW QR CODE
+        const verifyUrl = generateVerificationURL(data.rollNo);
+        new QRCode(document.getElementById("qrcode"), {
+            text: verifyUrl,
+            width: 90,
+            height: 90,
+            colorDark : "#1e40af",
+            colorLight : "#ffffff",
+            correctLevel : QRCode.CorrectLevel.H
+        });
+
+        window.scrollTo({top:0, behavior:'smooth'});
+    }
+
+    function hideResultCard() {
+        document.getElementById('result-card-container').classList.add('hidden');
+        showSection('viewer');
+        window.scrollTo({top:0, behavior:'smooth'});
+    }
+
+    async function saveResultToPersistentStorage(resultData) {
+        const rollNo = resultData.rollNo.trim().toUpperCase().replace(/\s+/g,'-');
+        const dataToSave = {...resultData, rollNo, timestamp: new Date().toISOString(), publishedBy: FALLBACK_ADMIN_EMAIL};
+        if (usingFirebase && window.firebase && db && typeof window.firebase.setDoc === 'function') {
+            try {
+                await window.firebase.setDoc(window.firebase.doc(db, `artifacts/${appId}/public/data/results`, rollNo), {...dataToSave, timestamp: window.firebase.serverTimestamp()});
+                return { ok: true, storage: 'firestore', rollNo };
+            } catch (e) { console.warn('Firestore failed', e); }
+        }
+        try {
+            const key = `allied_results_${rollNo}`;
+            localStorage.setItem(key, JSON.stringify(dataToSave));
+            return { ok: true, storage: 'local', rollNo, key };
+        } catch (e) { return { ok:false, error: e.message }; }
+    }
+
+    async function handleAdminLogin() {
+        const email = document.getElementById('adminEmail').value.trim();
+        const password = document.getElementById('adminPassword').value.trim();
+        const loginButton = document.getElementById('login-button');
+        if (!email || !password) { showMessageBox('Input Required', 'Enter credentials.'); return; }
+        loginButton.textContent = 'Signing in...'; loginButton.disabled = true;
+
+        if (email === FALLBACK_ADMIN_EMAIL && password === FALLBACK_ADMIN_PASSWORD) {
+            isAdminLoggedIn = true; updateGeneratorVisibility();
+            document.getElementById('user-info').textContent = `Admin Signed In: ${email}`;
+            loginButton.textContent = 'Sign In'; loginButton.disabled = false;
+            return;
+        }
+        showMessageBox('Login Failed', 'Incorrect credentials.');
+        loginButton.textContent = 'Sign In'; loginButton.disabled = false;
+    }
+
+    async function handleAdminSignOut() {
+        isAdminLoggedIn = false; updateGeneratorVisibility();
+        document.getElementById('user-info').textContent = 'Status: Unauthenticated';
+    }
+
+    async function handleResultGenerationAndSave() {
+        const data = collectFormData();
+        if (!data || !isAdminLoggedIn) return;
+        const saveBtn = document.getElementById('save-result-btn');
+        saveBtn.disabled = true; saveBtn.textContent = 'Saving...';
+        try {
+            const res = await saveResultToPersistentStorage(data);
+            if (res.ok) {
+                const stats = calculateResultSummary(data);
+                showResultCard(data, stats);
+            }
+        } finally {
+            saveBtn.disabled = false; saveBtn.textContent = 'Save Result & Preview';
+        }
+    }
+
+    // --- Modified: loadResult can now accept a direct rollNo from URL ---
+    async function loadResult(forcedRoll = null) {
+        const rollRaw = forcedRoll || document.getElementById('viewRollNo').value.trim();
+        const rollNo = rollRaw.toUpperCase().replace(/\s+/g,'-');
+        
+        if (!forcedRoll) {
+            const captcha = cleanNumberInput(document.getElementById('captcha-input').value);
+            if (!rollNo) { showMessageBox('Input Required','Enter Roll Number.'); return; }
+            if (captcha !== currentCaptchaAnswer) { showMessageBox('Invalid Captcha','Try again.'); generateCaptcha(); return; }
+        }
+
+        const key = `allied_results_${rollNo}`;
+        const stored = localStorage.getItem(key);
+        if (stored) {
+            const data = JSON.parse(stored);
+            const stats = calculateResultSummary(data);
+            showResultCard(data, stats);
+        } else {
+            showMessageBox('Not Found', `Roll No ${rollNo} not found.`);
+        }
+        generateCaptcha();
+    }
+
+    // --- Added: Check URL for ?rollNo=... on page load ---
+    function checkUrlParams() {
+        const params = new URLSearchParams(window.location.search);
+        const r = params.get('rollNo');
+        if (r) {
+            setTimeout(() => loadResult(r), 500);
+        }
+    }
+
+    function initApp() {
+        subjects = [
+            { id:1, name:'English', total:100, marksObtained:75 },
+            { id:2, name:'Urdu', total:100, marksObtained:68 },
+            { id:3, name:'Mathematics', total:100, marksObtained:89 },
+            { id:4, name:'Science', total:100, marksObtained:79 }
+        ];
+        nextId = subjects.length + 1;
+        renderSubjectRows();
+        generateCaptcha();
+        showSection('viewer');
+        checkUrlParams();
+    }
+
+    window.onload = initApp;
+
+    (function createModalIfMissing(){
+        if (document.getElementById('custom-modal')) return;
+        const modal = document.createElement('div');
+        modal.id = 'custom-modal';
+        modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 hidden';
+        modal.innerHTML = `<div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full transform scale-95 opacity-0 transition-all">
+            <h3 id="modal-title" class="text-xl font-bold text-allied-blue mb-4"></h3>
+            <p id="modal-message" class="text-gray-700 mb-6"></p>
+            <button onclick="document.getElementById('custom-modal').classList.add('hidden');" class="w-full px-4 py-2 bg-allied-gold text-white rounded-lg">OK</button>
+        </div>`;
+        document.body.appendChild(modal);
+    })();
+</script>
+</body>
+</html>
